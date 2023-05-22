@@ -77,15 +77,15 @@ class Predictor:
         if args.normalise:
             self.normalise(mix)
         #lowpass filter if model is not fullband
-        if args.cutoff > 0:
-          mix = lp_filter(mix,args.cutoff)
-        #lp_filter_fft
         #if args.cutoff > 0:
-        #  mix = lp_filter_fft(mix,args.cutoff)
+        #  mix = lp_filter(mix,args.cutoff)
+        lp_filter_fft
+        if args.cutoff > 0:
+          mix = lp_filter_fft(mix,args.cutoff)
         if mix.ndim == 1:
             mix = np.asfortranarray([mix,mix])   
         mix = mix.T
-        sources = self.demix(mix.T)
+        sources = self.demix_new(mix.T)
         print('-'*20)
         print('Inferences finished!')
         print('-'*20)
@@ -174,6 +174,38 @@ class Predictor:
                                             algorithm=args.mixing,
                                             value=b[s[0]])*args.compensate) # compensation
         return sources
+
+
+    def demix_new(self, mix, overlap=0.75):
+      
+
+
+      chunk_size = args.chunks*44100
+
+      
+      step = int(chunk_size * (1 - overlap))
+      # print('Initial shape: {} Chunk size: {} Step: {} Device: {}'.format(mix.shape, chunk_size, step, device))
+      result = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
+      divider = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
+
+      total = 0
+      for i in range(0, mix.shape[-1], step):
+          total += 1
+
+          start = i
+          end = min(i + chunk_size, mix.shape[-1])
+          # print('Chunk: {} Start: {} End: {}'.format(total, start, end))
+          mix_part = mix[:, start:end]
+          #sources = demix_base(mix_part, device, models)
+          sources = self.demix_base_new(mix_part)
+          # print(sources.shape)
+          result[..., start:end] += sources
+          divider[..., start:end] += 1
+      sources = result / divider
+      # print('Final shape: {} Overall time: {:.2f}'.format(sources.shape, time() - start_time))
+      return sources
+
+        
     def demix_base(self, mixes, margin_size):
         chunked_sources = []
         progress_bar = tqdm(total=len(mixes)*len(self.models))
@@ -183,7 +215,7 @@ class Predictor:
             sources = []
             n_sample = cmix.shape[1]
             mod = 0
-            for model in tqdm(self.models):
+            for model in self.models:
                 mod += 1
                 trim = model.n_fft//2
                 gen_size = model.chunk_size-2*trim
@@ -218,43 +250,65 @@ class Predictor:
                         end = None
                     sources.append(tar_signal[:,start:end])
 
-                progress_bar.update(1)
+                
             
             chunked_sources.append(sources)
         _sources = np.concatenate(chunked_sources, axis=-1)
         del self.onnx_models
-        progress_bar.close()
-        print(' >> done\n')
+        progress_bar.update(1)
+
         return _sources
-    
-    def demix_demucs(self, mix, margin_size):
-        processed = {}
-        #counter = 0
-        progress_bar = tqdm(total=len(mix))
-        progress_bar.set_description("Processing demucs")
-        for nmix in mix:
-            cmix = mix[nmix]
-            cmix = torch.tensor(cmix, dtype=torch.float32)
-            ref = cmix.mean(0)        
-            cmix = (cmix - ref.mean()) / ref.std()
-            
-            with torch.no_grad():
-                sources = apply_model(self.demucs, cmix.to(device), split=True, overlap=args.overlap, shifts=args.shifts)
-            sources = (sources * ref.std() + ref.mean()).cpu().numpy()
-            sources[[0,1]] = sources[[1,0]]
 
-            start = 0 if nmix == 0 else margin_size
-            end = None if nmix == list(mix.keys())[::-1][0] else -margin_size
-            if margin_size == 0:
-                end = None
-            processed[nmix] = sources[:,:,start:end].copy()
 
-            progress_bar.update(1)
-        sources = list(processed.values())
-        sources = np.concatenate(sources, axis=-1)
-        progress_bar.close()
-        print(' >> done\n')
-        return sources
+  
+    def demix_base_new(self, mix):
+      progress_bar = tqdm(total=len(mix)*len(self.models))
+      progress_bar.set_description("Processing base")
+      sources = []
+      n_sample = mix.shape[1]
+
+      for model in self.models:
+          trim = model.n_fft // 2
+          gen_size = model.chunk_size - 2 * trim
+          pad = gen_size - n_sample % gen_size
+          mix_p = np.concatenate(
+              (
+                  np.zeros((2, trim)),
+                  mix,
+                  np.zeros((2, pad)),
+                  np.zeros((2, trim))
+              ), 1
+          )
+
+          mix_waves = []
+          i = 0
+          while i < n_sample + pad:
+              waves = np.array(mix_p[:, i:i + model.chunk_size])
+              mix_waves.append(waves)
+              i += gen_size
+          mix_waves = torch.tensor(mix_waves, dtype=torch.float32).to(device)
+
+          with torch.no_grad():
+              _ort = ort.InferenceSession(os.path.join(args.onnx,model.target_name+'.onnx'), providers=['CUDAExecutionProvider'])
+              spek = model.stft(mix_waves)
+              #DENOISE ADDON CHANGES (taken from UVR denoise feature)
+              if args.denoise:
+                  spec_pred = -_ort.run(None, {'input': -spek.cpu().numpy()})[0]*0.5+_ort.run(None, {'input': spek.cpu().numpy()})[0]*0.5
+                  tar_waves = model.istft(torch.tensor(spec_pred))#.cpu()
+              else:
+                  tar_waves = model.istft(torch.tensor(_ort.run(None, {'input': spek.cpu().numpy()})[0]))#.cpu()
+              #DENOISE FIN
+              
+              tar_signal = tar_waves[:,:,trim:-trim].transpose(0,1).reshape(2, -1).numpy()[:, :-pad]
+              progress_bar.update(1)
+
+          sources.append(tar_signal)
+
+      del _ort
+      progress_bar.close()
+      print(' >> done\n')
+      return np.array(sources)
+
 
 def downloader(link, supress=False, dl=False):
     validate = URLValidator()
@@ -293,6 +347,7 @@ def lp_filter_fft(audio, cutoff, sr=44100):
     fft_audio[freq > cutoff] = 0
     filtered_audio = ifft(fft_audio)
     return np.real(filtered_audio)
+
 def main():
     global args
     p = argparse.ArgumentParser()
