@@ -144,6 +144,7 @@ class Conv_TDF_net_trim(nn.Module):
         
     def stft(self, x):
         x = x.reshape([-1, self.chunk_size])
+        self.window = self.window.to(x.device) # move window to same device as x
         x = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop, window=self.window, center=True, return_complex=True)
         x=torch.view_as_real(x)
         x = x.permute([0,3,1,2])
@@ -151,6 +152,7 @@ class Conv_TDF_net_trim(nn.Module):
         return x[:,:,:self.dim_f]
 
     def istft(self, x, freq_pad=None):
+        self.window = self.window.to(x.device) # move window to same device as x
         freq_pad = self.freq_pad.repeat([x.shape[0],1,1,1]) if freq_pad is None else freq_pad
         x = torch.cat([x, freq_pad], -2)
         c = 4*2 if self.target_name=='*' else 2
