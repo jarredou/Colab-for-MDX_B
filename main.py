@@ -111,14 +111,18 @@ class Predictor:
                     p = os.path.split(file_paths[i])
                     if args.cutoff > 0:
                       lp_mix = lp_filter(mix,args.cutoff)
-                    sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+lp_mix, rate)
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+lp_mix, rate)
+                    else:
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+mix, rate)
                     print('done')
                 else:
                     print('Inverting and exporting {}...'.format(stems[i]), end=' ')
                     p = os.path.split(file_paths[i])
                     if args.cutoff > 0:
-                      lp_mix = lp_filter_fft(mix,args.cutoff)
-                    sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+lp_mix, rate)
+                      lp_mix = lp_filter(mix,args.cutoff)
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+lp_mix, rate)
+                    else:
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+mix, rate)
                     print('done')
         print('-'*20)
     def normalise(self, wave):
@@ -177,7 +181,7 @@ class Predictor:
         return sources
 
 
-    def demix_new(self, mix, overlap=0.2):
+    def demix_new(self, mix, overlap=0.8):
       
       print("demix_new !")
 
