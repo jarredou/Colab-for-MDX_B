@@ -336,20 +336,13 @@ def downloader(link, supress=False, dl=False):
     
 
 def lp_filter(audio, cutoff, sr=44100):
-    print(audio.shape)
-    # Create an order 3 lowpass butterworth filter
     b, a = signal.butter(20, cutoff / (sr / 2))
     audio = audio.T
-    print(audio.shape)
-    # Apply the filter to each channel of the audio data
     filtered_audio = np.zeros_like(audio)
-    print(filtered_audio.shape)
     for i in range(audio.shape[0]):
-        print(audio[i].shape)
         filtered_audio[i] = signal.filtfilt(b, a, audio[i])
-    print(filtered_audio.shape)
+        
     return filtered_audio.T
-
 
 def main():
     global args
