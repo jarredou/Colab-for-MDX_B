@@ -76,12 +76,11 @@ class Predictor:
         mix, rate = librosa.load(m, mono=False, sr=44100)
         if args.normalise:
             self.normalise(mix)
-        #lowpass filter if model is not fullband
-        #if args.cutoff > 0:
-        #  mix = lp_filter(mix,args.cutoff)
-        lp_filter_fft
+        # lowpass filter if model is not fullband
         if args.cutoff > 0:
           mix = lp_filter_fft(mix,args.cutoff)
+        
+        
         if mix.ndim == 1:
             mix = np.asfortranarray([mix,mix])   
         mix = mix.T
@@ -94,13 +93,13 @@ class Predictor:
             c += 1
             if args.model == 'off':
                 print(f'Exporting {stems[i]}...',end=' ')
-                #if args.normalise:
+                # if args.normalise:
                 #    sources[c] = self.normalise(sources[c])
                 sf.write(file_paths[i], sources[c].T, rate)
                 print('done')
             else:
                 print(f'Exporting {stems[i]}...',end=' ')
-                #if args.normalise:
+                # if args.normalise:
                 #    sources[i] = self.normalise(sources[i])
                 sf.write(file_paths[i], sources[i].T, rate)
                 print('done')
@@ -176,9 +175,9 @@ class Predictor:
         return sources
 
 
-    def demix_new(self, mix, overlap=0.75):
+    def demix_new(self, mix, overlap=0.8):
       
-
+      print("demix_new !")
 
       chunk_size = args.chunks*44100
 
@@ -262,6 +261,7 @@ class Predictor:
 
   
     def demix_base_new(self, mix):
+      print("demix_base_new !")
       progress_bar = tqdm(total=len(mix)*len(self.models))
       progress_bar.set_description("Processing base")
       sources = []
@@ -339,7 +339,7 @@ def lp_filter(audio, cutoff, sr=44100):
     b, a = signal.butter(20, cutoff, fs=sr)
     filtered_audio = signal.filtfilt(b, a, audio)
     return filtered_audio
-
+"""
 def lp_filter_fft(audio, cutoff, sr=44100):
     print(f"The model has a cutoff, output audio will be filtered above {cutoff}hz !")
     freq = np.fft.rfftfreq(len(audio), d=1/sr)
@@ -347,6 +347,14 @@ def lp_filter_fft(audio, cutoff, sr=44100):
     fft_audio[freq > cutoff] = 0
     filtered_audio = ifft(fft_audio)
     return np.real(filtered_audio)
+"""
+def lp_filter_fft(signal, cutoff):
+    filtered_signal = np.zeros_like(signal)
+    for i in range(signal.shape[0]):
+        fft_signal = fft(signal[i])
+        fft_signal[int(cutoff):] = 0
+        filtered_signal[i] = ifft(fft_signal).real
+    return filtered_signal
 
 def main():
     global args
@@ -393,7 +401,7 @@ def main():
     p.add_argument('--cutoff', type=int, default=0)
     
     
-    p.add_argument('--overlap','-ov', type=float, default=0.5)
+    p.add_argument('--overlap','-ov', type=float, default=0.8)
     args = p.parse_args()
     
     autoDL = downloader(args.input)
