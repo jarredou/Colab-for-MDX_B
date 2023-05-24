@@ -28,7 +28,7 @@ from scipy.io.wavfile import write
 from scipy.signal import firwin, lfilter
 from tqdm import tqdm
 from scipy.fftpack import fft, ifft
-
+from scipy.signal import butter, sosfiltfilt
 
 
 warnings.filterwarnings("ignore")
@@ -185,11 +185,13 @@ class Predictor:
       
       print("demix_new !")
 
+      samples = mix.shape[-1]
       chunk_size = args.chunks*44100
+      if args.chunks == 0 or samples < chunk_size:
+          chunk_size = samples
 
       
       step = int(chunk_size * (1 - overlap))
-      # print('Initial shape: {} Chunk size: {} Step: {} Device: {}'.format(mix.shape, chunk_size, step, device))
       result = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
       divider = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
 
@@ -199,15 +201,11 @@ class Predictor:
 
           start = i
           end = min(i + chunk_size, mix.shape[-1])
-          # print('Chunk: {} Start: {} End: {}'.format(total, start, end))
           mix_part = mix[:, start:end]
-          #sources = demix_base(mix_part, device, models)
           sources = self.demix_base_new(mix_part)
-          # print(sources.shape)
           result[..., start:end] += sources
           divider[..., start:end] += 1
       sources = result / divider
-      # print('Final shape: {} Overall time: {:.2f}'.format(sources.shape, time() - start_time))
       return sources
 
         
@@ -340,12 +338,11 @@ def downloader(link, supress=False, dl=False):
     
 
 def lp_filter(audio, cutoff, sr=44100):
-    b, a = signal.butter(20, cutoff / (sr / 2))
+    sos = butter(20, cutoff / (sr / 2), btype='low', output='sos')
     audio = audio.T
     filtered_audio = np.zeros_like(audio)
     for i in range(audio.shape[0]):
-        filtered_audio[i] = signal.filtfilt(b, a, audio[i])
-        
+        filtered_audio[i] = sosfiltfilt(sos, audio[i])
     return filtered_audio.T
 
 def main():
