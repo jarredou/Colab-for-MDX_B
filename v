@@ -1,5 +1,7 @@
 
 
 Updates:
-  -added Kim Vocal 2 and de-reverb by FoxyJoy!
-  -added old 406 vocal and karaoke 2 fix
+  - Auto-model loader!
+  - Merged many jarredou's fixes
+  - Added another model pack
+  - Fixed GPU check

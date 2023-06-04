@@ -65,11 +65,18 @@
     },
     "MDX-UVR Vocal Model 406": {
         "compensate": 1.035,
-        "mdx_dim_f_set": 3072,
+        "mdx_dim_f_set": 2048,
         "mdx_dim_t_set": 8,
         "mdx_n_fft_scale_set": 7680,
         "primary_stem": "Instrumental",
         "cutoff": 17400
+    },
+    "MDX-UVR Vocal Model 406": {
+        "compensate": 1.035,
+        "mdx_dim_f_set": 3072,
+        "mdx_dim_t_set": 8,
+        "mdx_n_fft_scale_set": 7680,
+        "primary_stem": "Instrumental"
     },
     "MDX-UVR Ins Model Full Band 292": {
         "compensate": 1.035,
@@ -142,6 +149,7 @@
         "mdx_n_fft_scale_set": 7680,
         "primary_stem": "Vocals",
         "cutoff": 17400
+
     },
     "MDX-UVR-Kim Vocal Model 2 (Kim vocal 2)": {
         "compensate": 1.009,
