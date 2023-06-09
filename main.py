@@ -141,7 +141,8 @@ class Predictor:
 
       
       step = int(chunk_size * (1 - overlap))
-      print(step)
+      #print(step)
+      #print(mix.shape[-1])
       result = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
       divider = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
 
@@ -186,7 +187,7 @@ class Predictor:
           mix_waves = torch.tensor(mix_waves, dtype=torch.float32).to(device)
 
           with torch.no_grad():
-              _ort = ort.InferenceSession(os.path.join(args.onnx,model.target_name+'.onnx'), providers=['CPUExecutionProvider','CUDAExecutionProvider'])
+              _ort = ort.InferenceSession(os.path.join(args.onnx,model.target_name+'.onnx'), providers=['CUDAExecutionProvider'])
               spek = model.stft(mix_waves)
               #DENOISE ADDON CHANGES (taken from UVR denoise feature)
               if args.denoise:
@@ -206,7 +207,7 @@ class Predictor:
 
       del _ort
       #progress_bar.close()
-      print(' >> done\n')
+      #print(' >> done\n')
       return np.array(sources)
 
 
