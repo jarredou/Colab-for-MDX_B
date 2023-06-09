@@ -28,7 +28,7 @@ from scipy.io.wavfile import write
 from scipy.signal import firwin, lfilter
 from tqdm import tqdm
 from scipy.fftpack import fft, ifft
-
+from scipy.signal import butter, sosfiltfilt
 
 
 warnings.filterwarnings("ignore")
@@ -76,16 +76,13 @@ class Predictor:
         mix, rate = librosa.load(m, mono=False, sr=44100)
         if args.normalise:
             self.normalise(mix)
-        #lowpass filter if model is not fullband
-        if args.cutoff > 0:
-          mix = lp_filter(mix,args.cutoff)
-        #lp_filter_fft
+        # lowpass filter if model is not fullband
         #if args.cutoff > 0:
-        #  mix = lp_filter_fft(mix,args.cutoff)
+        # mix = lp_filter_fft(mix,args.cutoff)
         if mix.ndim == 1:
             mix = np.asfortranarray([mix,mix])   
         mix = mix.T
-        sources = self.demix(mix.T)
+        sources = self.demix_new(mix.T)
         print('-'*20)
         print('Inferences finished!')
         print('-'*20)
@@ -94,13 +91,13 @@ class Predictor:
             c += 1
             if args.model == 'off':
                 print(f'Exporting {stems[i]}...',end=' ')
-                #if args.normalise:
+                # if args.normalise:
                 #    sources[c] = self.normalise(sources[c])
                 sf.write(file_paths[i], sources[c].T, rate)
                 print('done')
             else:
                 print(f'Exporting {stems[i]}...',end=' ')
-                #if args.normalise:
+                # if args.normalise:
                 #    sources[i] = self.normalise(sources[i])
                 sf.write(file_paths[i], sources[i].T, rate)
                 print('done')
@@ -112,149 +109,107 @@ class Predictor:
                 if args.model == 'off':
                     print('Inverting and exporting {}...'.format(stems[i]), end=' ')
                     p = os.path.split(file_paths[i])
-                    sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+mix, rate)
+                    if args.cutoff > 0:
+                      lp_mix = lp_filter(mix,args.cutoff)
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+lp_mix, rate)
+                    else:
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[c].T)+mix, rate)
                     print('done')
                 else:
                     print('Inverting and exporting {}...'.format(stems[i]), end=' ')
                     p = os.path.split(file_paths[i])
-                    sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+mix, rate)
+                    if args.cutoff > 0:
+                      lp_mix = lp_filter(mix,args.cutoff)
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+lp_mix, rate)
+                    else:
+                      sf.write(os.path.join(p[0],'invert_'+p[1]), (-sources[i].T)+mix, rate)
                     print('done')
         print('-'*20)
     def normalise(self, wave):
         return wave / max(np.max(wave), abs(np.min(wave)))
     def dB_V(self, dB):
         return 10**(dB/20)
-    def demix(self, mix):
-        # 1 = demucs only
-        # 0 = onnx only
-        samples = mix.shape[-1]
-        margin = args.margin
-        chunk_size = args.chunks*44100
-        assert not margin == 0, 'margin cannot be zero!'
-        if margin > chunk_size:
-            margin = chunk_size
 
+    def demix_new(self, mix, overlap=0.9):
+      
+      print(f"demix_new with overlap = {overlap}")
 
-        b = np.array([[[0.5]], [[0.5]], [[0.7]], [[0.9]]])
-        segmented_mix = {}
-        
-        if args.chunks == 0 or samples < chunk_size:
-            chunk_size = samples
-        
-        counter = -1
-        for skip in range(0, samples, chunk_size):
-            counter+=1
-    
-            s_margin = 0 if counter == 0 else margin
-            end = min(skip+chunk_size+margin, samples)
+      samples = mix.shape[-1]
+      chunk_size = args.chunks*44100
+      if args.chunks == 0 or samples < chunk_size:
+          chunk_size = samples
 
-            start = skip-s_margin
+      
+      step = int(chunk_size * (1 - overlap))
+      #print(step)
+      #print(mix.shape[-1])
+      result = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
+      divider = np.zeros((1, 2, mix.shape[-1]), dtype=np.float32)
 
-            segmented_mix[skip] = mix[:,start:end].copy()
-            if end == samples:
-                break
-        
-        if args.model == 'off' and args.onnx != 'off':
-            sources = self.demix_base(segmented_mix, margin_size=margin)
-            
-        elif args.model != 'off' and args.onnx == 'off':
-            sources = self.demix_demucs(segmented_mix, margin_size=margin)
+      total = 0
+      for i in tqdm(range(0, mix.shape[-1], step)):
+          total += 1
 
-        else: # both, apply spec effects
-            base_out = self.demix_base(segmented_mix, margin_size=margin)
-            demucs_out = self.demix_demucs(segmented_mix, margin_size=margin)
-            nan_count = np.count_nonzero(np.isnan(demucs_out)) + np.count_nonzero(np.isnan(base_out))
-            if nan_count > 0:
-                print('Warning: there are {} nan values in the array(s).'.format(nan_count))
-                demucs_out, base_out = np.nan_to_num(demucs_out), np.nan_to_num(base_out)
-            sources = {}
-            for s in zip(sindex,range(len(b)-(len(sindex)-len(b)))):
-                print(f'Using ratio: {b[s[0]]}')
-                sources[s[0]] = (spec_effects(wave=[demucs_out[s[0]],base_out[s[1]]],
-                                            algorithm=args.mixing,
-                                            value=b[s[0]])*args.compensate) # compensation
-        return sources
-    def demix_base(self, mixes, margin_size):
-        chunked_sources = []
-        progress_bar = tqdm(total=len(mixes)*len(self.models))
-        progress_bar.set_description("Processing base")
-        for mix in mixes:
-            cmix = mixes[mix]
-            sources = []
-            n_sample = cmix.shape[1]
-            mod = 0
-            for model in tqdm(self.models):
-                mod += 1
-                trim = model.n_fft//2
-                gen_size = model.chunk_size-2*trim
-                pad = gen_size - n_sample%gen_size
-                mix_p = np.concatenate((np.zeros((2,trim)), cmix, np.zeros((2,pad)), np.zeros((2,trim))), 1)
-                mix_waves = []
-                i = 0
-                while i < n_sample + pad:
-                    waves = np.array(mix_p[:, i:i+model.chunk_size])
-                    mix_waves.append(waves)
-                    i += gen_size
-                mix_waves = torch.tensor(mix_waves, dtype=torch.float32).to(cpu)
-                with torch.no_grad():
-                    _ort = self.onnx_models[mod]
-                    spek = model.stft(mix_waves)
-                    
-                    
-                    
-                    #DENOISE ADDON CHANGES (taken from UVR denoise feature)
-                    if args.denoise:
-                        spec_pred = -_ort.run(None, {'input': -spek.cpu().numpy()})[0]*0.5+_ort.run(None, {'input': spek.cpu().numpy()})[0]*0.5
-                        tar_waves = model.istft(torch.tensor(spec_pred))#.cpu()
-                    else:
-                        tar_waves = model.istft(torch.tensor(_ort.run(None, {'input': spek.cpu().numpy()})[0]))#.cpu()
-                    #DENOISE FIN
-                    
-                    tar_signal = tar_waves[:,:,trim:-trim].transpose(0,1).reshape(2, -1).numpy()[:, :-pad]
+          start = i
+          end = min(i + chunk_size, mix.shape[-1])
+          mix_part = mix[:, start:end]
+          sources = self.demix_base_new(mix_part)
+          result[..., start:end] += sources
+          divider[..., start:end] += 1
+      sources = result / divider
+      return sources
+ 
+    def demix_base_new(self, mix):
+      #progress_bar = tqdm(total=len(mix)*len(self.models))
+      #progress_bar.set_description("Processing base (new)")
+      sources = []
+      n_sample = mix.shape[1]
 
-                    start = 0 if mix == 0 else margin_size
-                    end = None if mix == list(mixes.keys())[::-1][0] else -margin_size
-                    if margin_size == 0:
-                        end = None
-                    sources.append(tar_signal[:,start:end])
+      for model in self.models:
+          trim = model.n_fft // 2
+          gen_size = model.chunk_size - 2 * trim
+          pad = gen_size - n_sample % gen_size
+          mix_p = np.concatenate(
+              (
+                  np.zeros((2, trim)),
+                  mix,
+                  np.zeros((2, pad)),
+                  np.zeros((2, trim))
+              ), 1
+          )
 
-                progress_bar.update(1)
-            
-            chunked_sources.append(sources)
-        _sources = np.concatenate(chunked_sources, axis=-1)
-        del self.onnx_models
-        progress_bar.close()
-        print(' >> done\n')
-        return _sources
-    
-    def demix_demucs(self, mix, margin_size):
-        processed = {}
-        #counter = 0
-        progress_bar = tqdm(total=len(mix))
-        progress_bar.set_description("Processing demucs")
-        for nmix in mix:
-            cmix = mix[nmix]
-            cmix = torch.tensor(cmix, dtype=torch.float32)
-            ref = cmix.mean(0)        
-            cmix = (cmix - ref.mean()) / ref.std()
-            
-            with torch.no_grad():
-                sources = apply_model(self.demucs, cmix.to(device), split=True, overlap=args.overlap, shifts=args.shifts)
-            sources = (sources * ref.std() + ref.mean()).cpu().numpy()
-            sources[[0,1]] = sources[[1,0]]
+          mix_waves = []
+          i = 0
+          while i < n_sample + pad:
+              waves = np.array(mix_p[:, i:i + model.chunk_size])
+              mix_waves.append(waves)
+              i += gen_size
+          mix_waves = torch.tensor(mix_waves, dtype=torch.float32).to(device)
 
-            start = 0 if nmix == 0 else margin_size
-            end = None if nmix == list(mix.keys())[::-1][0] else -margin_size
-            if margin_size == 0:
-                end = None
-            processed[nmix] = sources[:,:,start:end].copy()
+          with torch.no_grad():
+              _ort = ort.InferenceSession(os.path.join(args.onnx,model.target_name+'.onnx'), providers=['CUDAExecutionProvider'])
+              spek = model.stft(mix_waves)
+              #DENOISE ADDON CHANGES (taken from UVR denoise feature)
+              if args.denoise:
+                  #spec_pred = -_ort.run(None, {'input': -spek.cpu().numpy()})[0]*0.5+_ort.run(None, {'input': spek.cpu().numpy()})[0]*0.5
+                  spec_pred_a = -_ort.run(None, {'input': -spek.cpu().numpy()})[0]*0.5
+                  spec_pred_b = _ort.run(None, {'input': spek.cpu().numpy()})[0]*0.5
+                  spec_pred = spec_pred_a + spec_pred_b
+                  tar_waves = model.istft(torch.tensor(spec_pred))#.cpu()
+              else:
+                  tar_waves = model.istft(torch.tensor(_ort.run(None, {'input': spek.cpu().numpy()})[0]))#.cpu()
+              #DENOISE FIN
+              
+              tar_signal = tar_waves[:,:,trim:-trim].transpose(0,1).reshape(2, -1).numpy()[:, :-pad]
+              #progress_bar.update(1)
 
-            progress_bar.update(1)
-        sources = list(processed.values())
-        sources = np.concatenate(sources, axis=-1)
-        progress_bar.close()
-        print(' >> done\n')
-        return sources
+          sources.append(tar_signal)
+
+      del _ort
+      #progress_bar.close()
+      #print(' >> done\n')
+      return np.array(sources)
+
 
 def downloader(link, supress=False, dl=False):
     validate = URLValidator()
@@ -279,20 +234,14 @@ def downloader(link, supress=False, dl=False):
         return [link]
     
 
-
 def lp_filter(audio, cutoff, sr=44100):
-    print(f"The model has a cutoff, output audio will be filtered above {cutoff}hz !")
-    b, a = signal.butter(20, cutoff, fs=sr)
-    filtered_audio = signal.filtfilt(b, a, audio)
-    return filtered_audio
+    sos = butter(20, cutoff / (sr / 2), btype='low', output='sos')
+    audio = audio.T
+    filtered_audio = np.zeros_like(audio)
+    for i in range(audio.shape[0]):
+        filtered_audio[i] = sosfiltfilt(sos, audio[i])
+    return filtered_audio.T
 
-def lp_filter_fft(audio, cutoff, sr=44100):
-    print(f"The model has a cutoff, output audio will be filtered above {cutoff}hz !")
-    freq = np.fft.rfftfreq(len(audio), d=1/sr)
-    fft_audio = fft(audio)
-    fft_audio[freq > cutoff] = 0
-    filtered_audio = ifft(fft_audio)
-    return np.real(filtered_audio)
 def main():
     global args
     p = argparse.ArgumentParser()
@@ -338,7 +287,7 @@ def main():
     p.add_argument('--cutoff', type=int, default=0)
     
     
-    p.add_argument('--overlap','-ov', type=float, default=0.5)
+    p.add_argument('--overlap','-ov', type=float, default=0.8)
     args = p.parse_args()
     
     autoDL = downloader(args.input)
