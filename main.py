@@ -130,7 +130,7 @@ class Predictor:
     def dB_V(self, dB):
         return 10**(dB/20)
 
-    def demix_new(self, mix, overlap=0.9):
+    def demix_new(self, mix, overlap=0.8):
       
       print(f"demix_new with overlap = {overlap}")
 
